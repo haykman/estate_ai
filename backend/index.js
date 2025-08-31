@@ -3,11 +3,20 @@ const app = express();
 const port = 3000;
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 app.use(express.json());
 
-const users = []; // In-memory store for users, replace with a database in a real application
+const pool = mysql.createPool({
+  host: 'localhost',
+  user: 'root',
+  password: 'root',
+  database: 'estate_ai',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
 
 // Helper function to generate tokens
 function generateTokens(user) {
@@ -34,28 +43,35 @@ function authenticateToken(req, res, next) {
 app.post('/register', async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(req.body.password, 10);
-    const user = { username: req.body.username, password: hashedPassword };
-    users.push(user);
+    const [result] = await pool.execute(
+      'INSERT INTO users (username, password) VALUES (?, ?)',
+      [req.body.username, hashedPassword]
+    );
     res.status(201).send('User registered');
-  } catch {
-    res.status(500).send();
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error registering user');
   }
 });
 
 // User login
 app.post('/login', async (req, res) => {
-  const user = users.find(user => user.username === req.body.username);
-  if (user == null) {
-    return res.status(400).send('Cannot find user');
-  }
+  const { username, password } = req.body;
   try {
-    if (await bcrypt.compare(req.body.password, user.password)) {
+    const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
+    const user = rows[0];
+
+    if (user == null) {
+      return res.status(400).send('Cannot find user');
+    }
+    if (await bcrypt.compare(password, user.password)) {
       const tokens = generateTokens(user);
       res.json(tokens);
     } else {
       res.status(401).send('Not Allowed');
     }
-  } catch {
+  } catch (error) {
+    console.error(error);
     res.status(500).send();
   }
 });
